@@ -74,3 +74,5 @@ async def ver_dados():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao carregar os dados: {str(e)}")
+    
+    #Fim porograma
