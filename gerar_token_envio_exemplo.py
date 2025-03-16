@@ -1,3 +1,4 @@
+# Exemplo de como pegar o token para uso na API
 import requests
 
 # URL do endpoint para gerar o token
@@ -13,7 +14,7 @@ headers = {
 }
 
 # Fazendo a requisição para obter o token
-response = requests.post(url, data=payload, headers=headers)  # Usando `data` para enviar a string diretamente
+response = requests.post(url, data=payload, headers=headers)  # Usando 'data' para enviar a string diretamente
 
 # Verificando se a requisição foi bem-sucedida
 if response.status_code == 200:
