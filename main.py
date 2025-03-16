@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException, Depends, Header, Body
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, EmailStr, field_validator
-from jose import JWTError, jwt
-from datetime import datetime, timedelta
+from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import BaseModel, field_validator
+from datetime import datetime
+from auth import gerar_token, verificar_token  # Importa do auth.py
 import json
 import os
 import threading
@@ -16,19 +16,9 @@ DATA_FILE = "dados_salvos.json"
 # Lock para garantir operações thread-safe
 lock = threading.Lock()
 
-# Configurações de autenticação
-SECRET_KEY = "sua_chave_secreta_muito_segura"  # Use uma chave secreta forte
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_HOURS = 12  # Expiração do token para envio de dados
-
 # Token exclusivo para leitura dos dados
 TOKEN_EXCLUSIVO_GET = "token_exclusivo_da_sua_maquina"  # Token fixo para acessar o GET
 
-# Lista de domínios permitidos para geração de tokens
-DOMINIOS_PERMITIDOS = ["grupominipreco.com.br", "outrodominio.com"]
-
-# Classe para autenticação
-security = HTTPBearer()
 
 # Classe para validar os dados enviados
 class Dados(BaseModel):
@@ -37,12 +27,20 @@ class Dados(BaseModel):
     tag_endereco: int
     codigo_produto: int
     quantidade: int
+    recontagem: int  # Nova coluna adicionada
 
     @field_validator("quantidade")
     @classmethod
     def validar_quantidade(cls, valor):
         if valor <= 0:
             raise ValueError("A quantidade deve ser maior que zero.")
+        return valor
+
+    @field_validator("recontagem")
+    @classmethod
+    def validar_recontagem(cls, valor):
+        if valor not in [0, 1]:
+            raise ValueError("O campo 'recontagem' deve ser 0 (não) ou 1 (sim).")
         return valor
 
 
@@ -62,51 +60,22 @@ def salvar_dados(dados):
             json.dump(dados, file, indent=4)
 
 
-# Função para criar um token JWT
-def criar_token(dados: dict):
-    to_encode = dados.copy()
-    expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-# Função para verificar o token JWT
-def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    try:
-        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Token inválido ou expirado")
-
-
-# Função para validar o domínio do e-mail
-def validar_dominio(email: str):
-    dominio = email.split("@")[-1]
-    if dominio not in DOMINIOS_PERMITIDOS:
-        raise HTTPException(status_code=403, detail="Domínio não autorizado para gerar tokens.")
-    return True
-
-
 # Rota para gerar o token de autenticação
-@app.get("/gerar-token/")
-async def gerar_token(email: EmailStr = Body(...)):
+@app.post("/auth/gerar-token/")
+async def gerar_token_endpoint(email: str = Body(...)):
     """
-    Gera um token JWT válido por 12 horas para autenticar o envio de dados.
-    O e-mail deve pertencer a um domínio autorizado.
+    Recebe um email no corpo da requisição e retorna um token JWT válido.
     """
-    # Verifica se o domínio do e-mail é permitido
-    validar_dominio(email)
-
-    # Gera o token com base no e-mail
-    token = criar_token({"email": email})
-    return {"token": token}
+    return await gerar_token(email)
 
 
 # Rota para enviar dados para a API (protegido por token JWT)
-@app.post("/enviar-dados/", dependencies=[Depends(verificar_token)])
-async def receber_dados(dados: Dados, credentials: HTTPAuthorizationCredentials = Depends(security)):
+@app.post("/enviar_dados/enviar-dados/", dependencies=[Depends(verificar_token)])
+async def receber_dados(
+    dados: Dados, credentials: HTTPAuthorizationCredentials = Depends(verificar_token)
+):
     """
-    Dados enviados por um cliente autenticado.
+    Recebe dados enviados por um cliente autenticado e os salva no servidor.
     """
     try:
         # Carrega os dados existentes
@@ -127,7 +96,7 @@ async def receber_dados(dados: Dados, credentials: HTTPAuthorizationCredentials 
 
 
 # Rota para visualizar os dados salvos (protegido por token exclusivo)
-@app.get("/ver-dados/")
+@app.get("/recebendo_dados/ver-dados/")
 async def ver_dados(authorization: str = Header(None)):
     """
     Retorna todos os dados salvos no servidor. Requer o token exclusivo.
