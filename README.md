@@ -7,3 +7,11 @@ Código do Operador
 Código da TAG
 Código do Produto
 Quantidade Contada
+
+
+usar 
+
+uvicorn main:app --reload
+
+
+para execuatr os testes
