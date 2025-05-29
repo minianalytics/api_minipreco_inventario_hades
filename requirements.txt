@@ -3,3 +3,4 @@ uvicorn
 gunicorn
 python-jose[cryptography]
 pydantic[email]
+pydantic-settings
