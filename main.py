@@ -1,6 +1,6 @@
 # main.py
 from fastapi import FastAPI, HTTPException, Depends, Header, Body
-from pydantic import BaseModel, field_validator, EmailStr, Field
+from pydantic import BaseModel, field_validator, EmailStr, Field, RootModel # Adicionado RootModel
 from datetime import datetime, date
 import json
 import os
@@ -8,10 +8,8 @@ import threading
 from typing import List, Optional
 
 # Importa as funções de autenticação refatoradas e as configurações
-# Se você moveu TOKEN_EXCLUSIVO_GET e DOMINIOS_PERMITIDOS para este main.py,
-# pode remover o 'from settings import settings'. Se não, mantenha.
 from auth import gerar_novo_token, verificar_token_jwt 
-from settings import settings # Mantenha se settings.py ainda for usado para outros configs
+from settings import settings 
 
 # --- Metadados da API para documentação ---
 api_description = """
@@ -86,7 +84,7 @@ class DadosInventarioPayload(BaseModel):
         return valor
 
     class Config:
-        json_schema_extra = { # Exemplo para a documentação do schema completo
+        json_schema_extra = { 
             "example": {
                 "loja_key": 101,
                 "tag_operador": 9001,
@@ -101,23 +99,15 @@ class DadosInventarioPayload(BaseModel):
 class DadosInventarioArmazenado(DadosInventarioPayload):
     """Modelo para os dados de inventário como são armazenados, incluindo timestamp da API."""
     horario_recebimento_api: datetime = Field(..., description="Timestamp ISO de quando o dado foi recebido e processado pela API.")
-    # opcional: registrado_por_email: Optional[EmailStr] = Field(None, description="E-mail do usuário que enviou os dados, extraído do token JWT.")
+
+# AQUI: CORREÇÃO PARA PYDANTIC V2 - USANDO ROOTMODEL
+class DadosInventarioListResponse(RootModel[List[DadosInventarioArmazenado]]):
+    """Resposta para a listagem de dados de inventário (lista direta de registros)."""
+    pass # Não é necessário definir __root__ ou qualquer campo aqui
 
 class MensagemResponse(BaseModel):
     """Resposta padrão para operações bem-sucedidas que não retornam outros dados."""
     mensagem: str = Field(..., example="Operação realizada com sucesso.")
-
-# ATENÇÃO: Esta classe de resposta é mais adequada para o endpoint /ver-dados/
-# que você queria usar. Ela retorna a lista de dados DIRETAMENTE, sem a chave "dados".
-# Se você quiser que o /ver-dados/ retorne {"dados": [...], "total_registros": ...},
-# você precisaria adaptar este modelo e a função.
-# Pelo que vimos, o coletor estava esperando a lista direta.
-# Se a API no Render ainda está retornando no formato {"total_registros": ..., "dados": [...]},
-# você deve usar a classe ListaDadosInventarioResponse que você tinha antes para este GET.
-# PARA CONSISTÊNCIA COM SEU COLETOR ATUAL (que espera uma lista direta), manteremos assim.
-class DadosInventarioListResponse(BaseModel):
-    __root__: List[DadosInventarioArmazenado]
-
 
 class HTTPErrorResponse(BaseModel):
     """Modelo para respostas de erro HTTP."""
@@ -202,8 +192,6 @@ async def receber_dados_inventario(
         dados_atuais = carregar_dados_do_arquivo()
 
         novo_registro_dict = dados_entrada.model_dump()
-        # Adiciona o timestamp do servidor
-        # O campo de timestamp é 'horario_recebimento_api' para bater com o coletor
         novo_registro_dict["horario_recebimento_api"] = datetime.now().isoformat()
         
         email_operador = payload_token.get("email")
@@ -222,8 +210,8 @@ async def receber_dados_inventario(
 
 
 @app.get(
-    "/ver-dados/", # AQUI: O endpoint agora é '/ver-dados/'
-    response_model=DadosInventarioListResponse, # AQUI: Usando o novo modelo para lista direta
+    "/ver-dados/", # Endpoint para visualização
+    response_model=DadosInventarioListResponse, # Usando o RootModel corrigido
     summary="Visualizar Dados de Inventário Salvos",
     description="""Retorna uma lista de todos os dados de contagem de inventário armazenados.
     Requer um token de autorização especial e fixo, configurado na API,
@@ -239,7 +227,6 @@ async def visualizar_dados_inventario(authorization: Optional[str] = Header(defa
     """
     Retorna todos os dados salvos. Requer o token exclusivo `TOKEN_EXCLUSIVO_GET`.
     """
-    # AQUI: Acessando settings.TOKEN_EXCLUSIVO_GET se você usa settings.py
     if not authorization or authorization != f"Bearer {settings.TOKEN_EXCLUSIVO_GET}":
         raise HTTPException(
             status_code=401,
@@ -247,7 +234,7 @@ async def visualizar_dados_inventario(authorization: Optional[str] = Header(defa
         )
     try:
         dados_salvos = carregar_dados_do_arquivo()
-        # Retorna a lista diretamente, conforme o DadosInventarioListResponse
+        # O Pydantic RootModel cuidará da serialização da lista
         return dados_salvos 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao carregar os dados: {str(e)}")
