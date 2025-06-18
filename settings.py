@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # API settings
     DATA_FILE: str = "dados_salvos.json"
-    TOKEN_EXCLUSIVO_GET: str = "token_exclusivo_da_sua_maquina_idealmente_de_env_var"
+    TOKEN_EXCLUSIVO_GET: str = "FDAGHFH$@&@#$&$#%YFHGBSZDGHBSDFHADFHSGHSDFJFJSDFJXCVBQDFG$@&¨¨&#*(&GET12345!" # Use um valor forte e único
 
     class Config:
         env_file = ".env" # Opcional: para carregar de um arquivo .env
