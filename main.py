@@ -1,15 +1,17 @@
 # main.py
 from fastapi import FastAPI, HTTPException, Depends, Header, Body
-from pydantic import BaseModel, field_validator, EmailStr, Field # Adicionado Field
-from datetime import datetime, date # Adicionado date
+from pydantic import BaseModel, field_validator, EmailStr, Field
+from datetime import datetime, date
 import json
 import os
 import threading
-from typing import List, Optional # Adicionado para tipagem
+from typing import List, Optional
 
 # Importa as funções de autenticação refatoradas e as configurações
-from auth import gerar_novo_token, verificar_token_jwt # Supondo que auth.py está ajustado
-from settings import settings # Supondo que settings.py existe e está configurado
+# Se você moveu TOKEN_EXCLUSIVO_GET e DOMINIOS_PERMITIDOS para este main.py,
+# pode remover o 'from settings import settings'. Se não, mantenha.
+from auth import gerar_novo_token, verificar_token_jwt 
+from settings import settings # Mantenha se settings.py ainda for usado para outros configs
 
 # --- Metadados da API para documentação ---
 api_description = """
@@ -50,7 +52,7 @@ file_lock = threading.Lock()
 
 class EmailPayload(BaseModel):
     """Corpo da requisição para solicitar um token de autenticação."""
-    email: EmailStr = Field(..., example="usuario@grupominopreco.com.br", description="E-mail válido do usuário para gerar o token.")
+    email: EmailStr = Field(..., example="usuario@grupominipreco.com.br", description="E-mail válido do usuário para gerar o token.")
 
 class TokenResponse(BaseModel):
     """Resposta ao solicitar um token de autenticação."""
@@ -67,7 +69,7 @@ class DadosInventarioPayload(BaseModel):
     codigo_produto: int = Field(..., description="Código EAN ou SKU (numérico) do produto contado.", example=7890000123456)
     quantidade: int = Field(..., description="Quantidade contada do produto. Deve ser um número inteiro maior que zero.", example=50)
     recontagem: int = Field(..., description="Indica se é uma recontagem. Use 0 para 'não' e 1 para 'sim'.", example=0)
-    data_contagem: date = Field(..., description="Data em que a contagem do inventário foi efetivamente realizada (Formato: YYYY-MM-DD).", example="2025-10-20")
+    data_contagem: date = Field(..., description="Data em que a contagem do inventário foi efetivamente realizada (Formato:YYYY-MM-DD).", example="2025-10-20")
 
     @field_validator("quantidade")
     @classmethod
@@ -105,10 +107,17 @@ class MensagemResponse(BaseModel):
     """Resposta padrão para operações bem-sucedidas que não retornam outros dados."""
     mensagem: str = Field(..., example="Operação realizada com sucesso.")
 
-class ListaDadosInventarioResponse(BaseModel):
-    """Resposta para a listagem de dados de inventário."""
-    total_registros: int = Field(..., example=42, description="Número total de registros de inventário encontrados.")
-    dados: List[DadosInventarioArmazenado] = Field(..., description="Lista dos registros de inventário.")
+# ATENÇÃO: Esta classe de resposta é mais adequada para o endpoint /ver-dados/
+# que você queria usar. Ela retorna a lista de dados DIRETAMENTE, sem a chave "dados".
+# Se você quiser que o /ver-dados/ retorne {"dados": [...], "total_registros": ...},
+# você precisaria adaptar este modelo e a função.
+# Pelo que vimos, o coletor estava esperando a lista direta.
+# Se a API no Render ainda está retornando no formato {"total_registros": ..., "dados": [...]},
+# você deve usar a classe ListaDadosInventarioResponse que você tinha antes para este GET.
+# PARA CONSISTÊNCIA COM SEU COLETOR ATUAL (que espera uma lista direta), manteremos assim.
+class DadosInventarioListResponse(BaseModel):
+    __root__: List[DadosInventarioArmazenado]
+
 
 class HTTPErrorResponse(BaseModel):
     """Modelo para respostas de erro HTTP."""
@@ -134,7 +143,7 @@ def salvar_dados_no_arquivo(dados: List[dict]):
     """Salva a lista de dados no arquivo JSON de forma thread-safe."""
     with file_lock:
         with open(settings.DATA_FILE, "w", encoding="utf-8") as file:
-            json.dump(dados, file, indent=4, ensure_ascii=False, default=str) # default=str para lidar com date/datetime
+            json.dump(dados, file, indent=4, ensure_ascii=False, default=str)
 
 
 # --- Endpoints da API ---
@@ -159,12 +168,11 @@ async def login_para_gerar_token(payload: EmailPayload):
     Recebe um e-mail, valida o domínio e gera um token JWT.
     """
     try:
-        token_data = await gerar_novo_token(payload.email) # gerar_novo_token deve estar adaptado
+        token_data = await gerar_novo_token(payload.email)
         return TokenResponse(**token_data)
-    except HTTPException as e: # Repassa HTTPExceptions geradas por gerar_novo_token
+    except HTTPException as e:
         raise e
-    except Exception as e: # Captura outros erros inesperados
-        # Idealmente, logar o erro 'e' aqui
+    except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno ao gerar token: {str(e)}")
 
 
@@ -185,7 +193,7 @@ async def login_para_gerar_token(payload: EmailPayload):
 )
 async def receber_dados_inventario(
     dados_entrada: DadosInventarioPayload,
-    payload_token: dict = Depends(verificar_token_jwt) # Injeta o payload do token verificado
+    payload_token: dict = Depends(verificar_token_jwt)
 ):
     """
     Recebe dados de contagem do inventário, valida, adiciona timestamp da API e salva.
@@ -195,9 +203,9 @@ async def receber_dados_inventario(
 
         novo_registro_dict = dados_entrada.model_dump()
         # Adiciona o timestamp do servidor
+        # O campo de timestamp é 'horario_recebimento_api' para bater com o coletor
         novo_registro_dict["horario_recebimento_api"] = datetime.now().isoformat()
         
-        # Opcional: Adicionar e-mail do token ao registro, se desejado
         email_operador = payload_token.get("email")
         if email_operador:
             novo_registro_dict["registrado_por_email"] = email_operador
@@ -207,16 +215,15 @@ async def receber_dados_inventario(
 
         return MensagemResponse(mensagem="Dados de inventário recebidos e salvos com sucesso!")
 
-    except ValueError as ve: # Erros de validação do Pydantic ou dos validadores customizados
+    except ValueError as ve:
         raise HTTPException(status_code=422, detail=str(ve))
     except Exception as e:
-        # Logar o erro `e` em um sistema de logging em produção
         raise HTTPException(status_code=500, detail=f"Erro interno ao processar e salvar os dados: {str(e)}")
 
 
 @app.get(
-    "/inventario/dados",
-    response_model=ListaDadosInventarioResponse,
+    "/ver-dados/", # AQUI: O endpoint agora é '/ver-dados/'
+    response_model=DadosInventarioListResponse, # AQUI: Usando o novo modelo para lista direta
     summary="Visualizar Dados de Inventário Salvos",
     description="""Retorna uma lista de todos os dados de contagem de inventário armazenados.
     Requer um token de autorização especial e fixo, configurado na API,
@@ -232,6 +239,7 @@ async def visualizar_dados_inventario(authorization: Optional[str] = Header(defa
     """
     Retorna todos os dados salvos. Requer o token exclusivo `TOKEN_EXCLUSIVO_GET`.
     """
+    # AQUI: Acessando settings.TOKEN_EXCLUSIVO_GET se você usa settings.py
     if not authorization or authorization != f"Bearer {settings.TOKEN_EXCLUSIVO_GET}":
         raise HTTPException(
             status_code=401,
@@ -239,14 +247,9 @@ async def visualizar_dados_inventario(authorization: Optional[str] = Header(defa
         )
     try:
         dados_salvos = carregar_dados_do_arquivo()
-        # Para garantir que os dados retornados correspondam ao schema DadosInventarioArmazenado,
-        # seria ideal validar/converter cada item. Por simplicidade, assumimos que estão corretos.
-        # Em um cenário mais robusto, você pode usar:
-        # dados_validados = [DadosInventarioArmazenado(**dado) for dado in dados_salvos]
-        # return ListaDadosInventarioResponse(total_registros=len(dados_validados), dados=dados_validados)
-        return ListaDadosInventarioResponse(total_registros=len(dados_salvos), dados=dados_salvos)
+        # Retorna a lista diretamente, conforme o DadosInventarioListResponse
+        return dados_salvos 
     except Exception as e:
-        # Logar o erro `e`
         raise HTTPException(status_code=500, detail=f"Erro ao carregar os dados: {str(e)}")
 
 # --- Inicialização (opcional, para rodar com uvicorn main:app --reload) ---
