@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "sua_chave_secreta_muito_segura_idealmente_de_env_var"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_HOURS: int = 12
-    DOMINIOS_PERMITIDOS: List[str] = ["grupominopreco.com.br", "inventorybrasil.com.br"]
+    DOMINIOS_PERMITIDOS: List[str] = ["grupominopreco.com.br", "inventorybrasil.com.br"] # Adicione aqui!
 
     # API settings
     DATA_FILE: str = "dados_salvos.json"
