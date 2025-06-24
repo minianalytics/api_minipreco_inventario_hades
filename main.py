@@ -1,6 +1,6 @@
 # main.py
 from fastapi import FastAPI, HTTPException, Depends, Header, Body
-from pydantic import BaseModel, field_validator, EmailStr, Field, RootModel # Adicionado RootModel
+from pydantic import BaseModel, field_validator, EmailStr, Field, RootModel
 from datetime import datetime, date
 import json
 import os
@@ -8,8 +8,8 @@ import threading
 from typing import List, Optional
 
 # Importa as funções de autenticação refatoradas e as configurações
-from auth import gerar_novo_token, verificar_token_jwt 
-from settings import settings 
+from auth import gerar_novo_token, verificar_token_jwt
+from settings import settings
 
 # --- Metadados da API para documentação ---
 api_description = """
@@ -59,7 +59,7 @@ class TokenResponse(BaseModel):
 
 class DadosInventarioPayload(BaseModel):
     """
-    Modelo para os dados de contagem de inventário enviados pelo cliente.
+    Modelo para os dados de contagem de inventário de um único item.
     """
     loja_key: int = Field(..., description="Identificador numérico único da loja.", example=101)
     tag_operador: int = Field(..., description="Tag de identificação do operador que realizou a contagem.", example=9001)
@@ -84,7 +84,7 @@ class DadosInventarioPayload(BaseModel):
         return valor
 
     class Config:
-        json_schema_extra = { 
+        json_schema_extra = {
             "example": {
                 "loja_key": 101,
                 "tag_operador": 9001,
@@ -96,9 +96,42 @@ class DadosInventarioPayload(BaseModel):
             }
         }
 
+# NOVO MODELO para a entrada da API que encapsula a lista de dados
+class InventarioListaRecebimentoPayload(BaseModel):
+    """
+    Modelo para receber uma lista de dados de contagem de inventário encapsulada
+    sob a chave 'data'.
+    """
+    data: List[DadosInventarioPayload] = Field(
+        ...,
+        description="Lista de registros de contagem de inventário a serem enviados.",
+        example=[
+            {
+                "loja_key": 101,
+                "tag_operador": 9001,
+                "tag_endereco": 404,
+                "codigo_produto": 7890000123456,
+                "quantidade": 50,
+                "recontagem": 0,
+                "data_contagem": "2025-10-20"
+            },
+            {
+                "loja_key": 101,
+                "tag_operador": 9002,
+                "tag_endereco": 405,
+                "codigo_produto": 1234567890123,
+                "quantidade": 10,
+                "recontagem": 1,
+                "data_contagem": "2025-10-21"
+            }
+        ]
+    )
+
 class DadosInventarioArmazenado(DadosInventarioPayload):
     """Modelo para os dados de inventário como são armazenados, incluindo timestamp da API."""
     horario_recebimento_api: datetime = Field(..., description="Timestamp ISO de quando o dado foi recebido e processado pela API.")
+    registrado_por_email: Optional[str] = Field(None, description="E-mail do operador que registrou o dado (opcional).")
+
 
 # AQUI: CORREÇÃO PARA PYDANTIC V2 - USANDO ROOTMODEL
 class DadosInventarioListResponse(RootModel[List[DadosInventarioArmazenado]]):
@@ -170,9 +203,10 @@ async def login_para_gerar_token(payload: EmailPayload):
     "/inventario/dados",
     response_model=MensagemResponse,
     summary="Enviar Dados de Contagem de Inventário",
-    description="""Recebe um novo registro de contagem de inventário.
-    Requer autenticação via token JWT. Os dados enviados são validados e, se corretos,
-    são armazenados com um timestamp indicando o momento do recebimento pela API.""",
+    description="""Recebe uma **lista** de registros de contagem de inventário encapsulada
+    em um objeto 'data'. Requer autenticação via token JWT.
+    Os dados enviados são validados e, se corretos, são armazenados com um timestamp
+    indicando o momento do recebimento pela API.""",
     tags=["Inventário"],
     responses={
         200: {"model": MensagemResponse, "description": "Dados recebidos e salvos com sucesso."},
@@ -182,23 +216,28 @@ async def login_para_gerar_token(payload: EmailPayload):
     }
 )
 async def receber_dados_inventario(
-    dados_entrada: DadosInventarioPayload,
+    # ALTERAÇÃO AQUI: Agora esperamos o novo modelo que encapsula a lista
+    payload: InventarioListaRecebimentoPayload,
     payload_token: dict = Depends(verificar_token_jwt)
 ):
     """
-    Recebe dados de contagem do inventário, valida, adiciona timestamp da API e salva.
+    Recebe dados de contagem do inventário (lista), valida, adiciona timestamp da API e salva.
     """
     try:
         dados_atuais = carregar_dados_do_arquivo()
-
-        novo_registro_dict = dados_entrada.model_dump()
-        novo_registro_dict["horario_recebimento_api"] = datetime.now().isoformat()
-        
         email_operador = payload_token.get("email")
-        if email_operador:
-            novo_registro_dict["registrado_por_email"] = email_operador
 
-        dados_atuais.append(novo_registro_dict)
+        # Itera sobre cada item na lista 'data' do payload recebido
+        for dados_entrada_item in payload.data:
+            # Converte o Pydantic model para dicionário
+            novo_registro_dict = dados_entrada_item.model_dump()
+            novo_registro_dict["horario_recebimento_api"] = datetime.now().isoformat()
+
+            if email_operador:
+                novo_registro_dict["registrado_por_email"] = email_operador
+
+            dados_atuais.append(novo_registro_dict)
+
         salvar_dados_no_arquivo(dados_atuais)
 
         return MensagemResponse(mensagem="Dados de inventário recebidos e salvos com sucesso!")
@@ -235,7 +274,7 @@ async def visualizar_dados_inventario(authorization: Optional[str] = Header(defa
     try:
         dados_salvos = carregar_dados_do_arquivo()
         # O Pydantic RootModel cuidará da serialização da lista
-        return dados_salvos 
+        return dados_salvos
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao carregar os dados: {str(e)}")
 
